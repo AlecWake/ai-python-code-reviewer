@@ -61,6 +61,32 @@ def find_exception_swallowing(tree: ast.AST):
 
     return issues
 
+def find_is_vs_equals_misuse(tree: ast.AST):
+    issues = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            # node.ops: list of comparison operators (Is, Eq, etc.)
+            # node.comparators: list of right-hand expressions
+            for op, comp in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.Is, ast.IsNot)):
+                    # Allow "is None" and "is not None" (best practice)
+                    if isinstance(comp, ast.Constant) and comp.value is None:
+                        continue
+
+                    # Flag: using "is" with literals like strings/ints/bools
+                    if isinstance(comp, ast.Constant):
+                        issues.append({
+                            "type": "is_vs_equals_misuse",
+                            "severity": "medium",
+                            "line": node.lineno,
+                            "col": node.col_offset,
+                            "message": "Possible misuse of 'is'/'is not' for value comparison. Use '==' or '!=' for literals.",
+                            "suggested_fix": "Use '==' for equality checks (keep 'is None' only for None checks)."
+                        })
+
+    return issues
+
 @app.post("/analyze")
 def analyze_code(request: AnalyzeRequest):
     try:
@@ -83,6 +109,7 @@ def analyze_code(request: AnalyzeRequest):
     issues = []
     issues.extend(find_mutable_default_args(tree))
     issues.extend(find_exception_swallowing(tree))
+    issues.extend(find_is_vs_equals_misuse(tree))
 
 
     return {
