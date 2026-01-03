@@ -120,6 +120,52 @@ def find_shadowed_builtins(tree: ast.AST):
 
     return issues
 
+def find_possible_missing_returns(tree: ast.AST):
+    issues = []
+
+    def has_return_with_value(func: ast.AST) -> bool:
+        for n in ast.walk(func):
+            if isinstance(n, ast.Return) and n.value is not None:
+                return True
+        return False
+
+    def ends_with_guaranteed_return(body) -> bool:
+        if not body:
+            return False
+        last = body[-1]
+
+        # return ...
+        if isinstance(last, ast.Return):
+            return True
+
+        # if/else where both sides guarantee return
+        if isinstance(last, ast.If):
+            return ends_with_guaranteed_return(last.body) and ends_with_guaranteed_return(last.orelse)
+
+        # try where all relevant blocks guarantee return
+        if isinstance(last, ast.Try):
+            # If try has excepts, all except bodies must guarantee return too
+            handlers_ok = all(ends_with_guaranteed_return(h.body) for h in last.handlers) if last.handlers else True
+            orelse_ok = ends_with_guaranteed_return(last.orelse) if last.orelse else True
+            final_ok = ends_with_guaranteed_return(last.finalbody) if last.finalbody else True
+            return ends_with_guaranteed_return(last.body) and handlers_ok and orelse_ok and final_ok
+
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if has_return_with_value(node) and not ends_with_guaranteed_return(node.body):
+                issues.append({
+                    "type": "possible_missing_return",
+                    "severity": "medium",
+                    "line": node.lineno,
+                    "col": node.col_offset,
+                    "message": f"Function '{node.name}' may not return a value on all code paths.",
+                    "suggested_fix": "Ensure all branches return a value (or return explicitly at the end)."
+                })
+
+    return issues
+
 @app.post("/analyze")
 def analyze_code(request: AnalyzeRequest):
     try:
@@ -144,7 +190,7 @@ def analyze_code(request: AnalyzeRequest):
     issues.extend(find_exception_swallowing(tree))
     issues.extend(find_is_vs_equals_misuse(tree))
     issues.extend(find_shadowed_builtins(tree))
-
+    issues.extend(find_possible_missing_returns(tree))
 
     return {
         "success": True,
