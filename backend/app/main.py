@@ -87,6 +87,39 @@ def find_is_vs_equals_misuse(tree: ast.AST):
 
     return issues
 
+def find_shadowed_builtins(tree: ast.AST):
+    issues = []
+
+    builtins_to_flag = {
+        "list", "dict", "set", "tuple", "str", "int", "float", "bool",
+        "id", "type", "sum", "min", "max", "len", "map", "filter", "input"
+    }
+
+    def add_issue(name: str, lineno: int, col: int):
+        issues.append({
+            "type": "shadowed_builtin",
+            "severity": "medium",
+            "line": lineno,
+            "col": col,
+            "message": f"Variable name '{name}' shadows a Python built-in.",
+            "suggested_fix": f"Rename '{name}' to something more specific (e.g., '{name}_value', '{name}_list')."
+        })
+
+    for node in ast.walk(tree):
+        # Assignments like: list = ...
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in builtins_to_flag:
+                    add_issue(target.id, node.lineno, node.col_offset)
+
+        # Function args like: def f(list): ...
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for arg in node.args.args:
+                if arg.arg in builtins_to_flag:
+                    add_issue(arg.arg, arg.lineno, arg.col_offset)
+
+    return issues
+
 @app.post("/analyze")
 def analyze_code(request: AnalyzeRequest):
     try:
@@ -110,6 +143,7 @@ def analyze_code(request: AnalyzeRequest):
     issues.extend(find_mutable_default_args(tree))
     issues.extend(find_exception_swallowing(tree))
     issues.extend(find_is_vs_equals_misuse(tree))
+    issues.extend(find_shadowed_builtins(tree))
 
 
     return {
