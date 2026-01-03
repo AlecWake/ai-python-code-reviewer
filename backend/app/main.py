@@ -30,6 +30,37 @@ def find_mutable_default_args(tree: ast.AST):
 
     return issues
 
+def find_exception_swallowing(tree: ast.AST):
+    issues = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for handler in node.handlers:
+                # handler.type is None for bare "except:"
+                is_bare_except = handler.type is None
+
+                # except Exception:
+                is_exception_except = (
+                    isinstance(handler.type, ast.Name) and handler.type.id == "Exception"
+                )
+
+                # If the except body is only "pass", it's swallowing
+                body_is_just_pass = (
+                    len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass)
+                )
+
+                if body_is_just_pass and (is_bare_except or is_exception_except):
+                    issues.append({
+                        "type": "exception_swallowing",
+                        "severity": "high",
+                        "line": handler.lineno,
+                        "col": handler.col_offset,
+                        "message": "Exception is caught and ignored using 'except: pass' or 'except Exception: pass'.",
+                        "suggested_fix": "Handle the error, log it, or re-raise. Avoid silently ignoring exceptions."
+                    })
+
+    return issues
+
 @app.post("/analyze")
 def analyze_code(request: AnalyzeRequest):
     try:
@@ -51,6 +82,8 @@ def analyze_code(request: AnalyzeRequest):
 
     issues = []
     issues.extend(find_mutable_default_args(tree))
+    issues.extend(find_exception_swallowing(tree))
+
 
     return {
         "success": True,
